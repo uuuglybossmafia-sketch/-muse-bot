@@ -1,81 +1,84 @@
 import os
-import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+import time
+import requests
 from openai import OpenAI
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-MENU, CHORDS, MIXING, MASTERING, CHAT = range(5)
-
-MAIN_KEYBOARD = ReplyKeyboardMarkup([
-    [KeyboardButton("🎸 Аккорды"), KeyboardButton("🎚️ Сведение")],
-    [KeyboardButton("🔊 Мастеринг"), KeyboardButton("💬 Свободный чат")],
-    [KeyboardButton("🏠 Главное меню")]
-], resize_keyboard=True)
+user_data = {}
 
 SYSTEM_PROMPTS = {
-    CHORDS: "Ты профессиональный музыкальный теоретик и продюсер. Помогаешь с подбором и анализом аккордов, прогрессий, тональностей. Давай конкретные советы с примерами из известной музыки. Отвечай по-русски.",
-    MIXING: "Ты опытный звукорежиссёр и mixing engineer. Давай конкретные советы по сведению: EQ, компрессия, реверб, панорама. Называй реальные плагины (Fabfilter, Waves, iZotope), конкретные значения в Hz и dB. Отвечай по-русски.",
-    MASTERING: "Ты профессиональный mastering engineer. Помогаешь с финальной обработкой треков: LUFS, лимитинг, тональный баланс. Знаешь стандарты всех платформ. Отвечай по-русски.",
-    CHAT: "Ты MUSE — AI-ассистент по музыкальному продакшну. Помогаешь с теорией музыки, аранжировкой, выбором инструментов. Отвечай дружелюбно по-русски."
+    "chords": "Ты профессиональный музыкальный теоретик и продюсер. Помогаешь с подбором и анализом аккордов, прогрессий, тональностей. Давай конкретные советы с примерами из известной музыки. Отвечай по-русски.",
+    "mixing": "Ты опытный звукорежиссёр и mixing engineer. Давай конкретные советы по сведению: EQ, компрессия, реверб, панорама. Называй реальные плагины (Fabfilter, Waves, iZotope), конкретные значения в Hz и dB. Отвечай по-русски.",
+    "mastering": "Ты профессиональный mastering engineer. Помогаешь с финальной обработкой треков: LUFS, лимитинг, тональный баланс. Знаешь стандарты всех платформ (Spotify -14 LUFS и т.д.). Отвечай по-русски.",
+    "chat": "Ты MUSE — AI-ассистент по музыкальному продакшну. Помогаешь с теорией музыки, аранжировкой, выбором инструментов. Отвечай дружелюбно по-русски."
 }
 
 MODE_NAMES = {
-    CHORDS: "🎸 Режим: Аккорды",
-    MIXING: "🎚️ Режим: Сведение",
-    MASTERING: "🔊 Режим: Мастеринг",
-    CHAT: "💬 Свободный чат"
+    "chords": "🎸 Аккорды",
+    "mixing": "🎚️ Сведение",
+    "mastering": "🔊 Мастеринг",
+    "chat": "💬 Чат"
 }
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text(
+def send_message(chat_id, text, keyboard=None):
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if keyboard:
+        payload["reply_markup"] = {"keyboard": keyboard, "resize_keyboard": True}
+    requests.post(f"{BASE_URL}/sendMessage", json=payload)
+
+def send_typing(chat_id):
+    requests.post(f"{BASE_URL}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
+
+MAIN_KEYBOARD = [
+    ["🎸 Аккорды", "🎚️ Сведение"],
+    ["🔊 Мастеринг", "💬 Свободный чат"]
+]
+
+def handle_start(chat_id):
+    user_data[chat_id] = {"mode": "chat", "history": []}
+    send_message(chat_id,
         "👋 Привет! Я *MUSE* — твой AI-ассистент по музыкальному продакшну.\n\n"
         "🎸 *Аккорды* — подбор прогрессий\n"
         "🎚️ *Сведение* — EQ, компрессия, баланс\n"
         "🔊 *Мастеринг* — LUFS, лимитинг, форматы\n"
         "💬 *Чат* — любые вопросы о музыке\n\n"
         "Выбери раздел 👇",
-        parse_mode="Markdown",
-        reply_markup=MAIN_KEYBOARD
+        MAIN_KEYBOARD
     )
-    return MENU
 
-async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    modes = {
-        "🎸 Аккорды": (CHORDS, "🎸 *Режим: Аккорды*\n\nНапример: «Подбери прогрессию в Am для хип-хопа»\n\nНапиши свой вопрос 👇"),
-        "🎚️ Сведение": (MIXING, "🎚️ *Режим: Сведение*\n\nНапример: «Бас и кик конфликтуют — как разделить?»\n\nНапиши свой вопрос 👇"),
-        "🔊 Мастеринг": (MASTERING, "🔊 *Режим: Мастеринг*\n\nНапример: «Какой LUFS нужен для Spotify?»\n\nНапиши свой вопрос 👇"),
-        "💬 Свободный чат": (CHAT, "💬 *Свободный чат*\n\nЗадавай любые вопросы о музыке!\n\nНапиши свой вопрос 👇"),
+def handle_text(chat_id, text):
+    if chat_id not in user_data:
+        user_data[chat_id] = {"mode": "chat", "history": []}
+
+    mode_map = {
+        "🎸 Аккорды": "chords",
+        "🎚️ Сведение": "mixing",
+        "🔊 Мастеринг": "mastering",
+        "💬 Свободный чат": "chat"
     }
-    if text in modes:
-        mode, msg = modes[text]
-        context.user_data['mode'] = mode
-        context.user_data['history'] = []
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-        return mode
-    elif text == "🏠 Главное меню":
-        return await start(update, context)
-    return MENU
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "🏠 Главное меню":
-        return await start(update, context)
-    if text in ["🎸 Аккорды", "🎚️ Сведение", "🔊 Мастеринг", "💬 Свободный чат"]:
-        return await handle_menu(update, context)
+    if text in mode_map:
+        mode = mode_map[text]
+        user_data[chat_id]["mode"] = mode
+        user_data[chat_id]["history"] = []
+        hints = {
+            "chords": "Например: «Подбери прогрессию в Am для хип-хопа»",
+            "mixing": "Например: «Бас и кик конфликтуют — как разделить?»",
+            "mastering": "Например: «Какой LUFS нужен для Spotify?»",
+            "chat": "Задавай любые вопросы о музыке!"
+        }
+        send_message(chat_id, f"{MODE_NAMES[mode]}\n\n{hints[mode]}\n\nНапиши свой вопрос 👇", MAIN_KEYBOARD)
+        return
 
-    mode = context.user_data.get('mode', CHAT)
-    history = context.user_data.get('history', [])
-    await update.message.chat.send_action("typing")
+    mode = user_data[chat_id].get("mode", "chat")
+    history = user_data[chat_id].get("history", [])
+
+    send_typing(chat_id)
     history.append({"role": "user", "content": text})
     if len(history) > 10:
         history = history[-10:]
@@ -88,31 +91,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         reply = response.choices[0].message.content
         history.append({"role": "assistant", "content": reply})
-        context.user_data['history'] = history
-        await update.message.reply_text(
-            f"{MODE_NAMES.get(mode, '')}\n\n{reply}",
-            reply_markup=MAIN_KEYBOARD
-        )
+        user_data[chat_id]["history"] = history
+        send_message(chat_id, f"*{MODE_NAMES[mode]}*\n\n{reply}", MAIN_KEYBOARD)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text("⚠️ Ошибка. Попробуй ещё раз.", reply_markup=MAIN_KEYBOARD)
-    return mode
+        send_message(chat_id, f"⚠️ Ошибка: {str(e)}", MAIN_KEYBOARD)
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)],
-            CHORDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
-            MIXING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
-            MASTERING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
-            CHAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
-        },
-        fallbacks=[CommandHandler("start", start)],
-    )
-    app.add_handler(conv)
-    app.run_polling(drop_pending_updates=True)
+    print("MUSE Bot started!")
+    offset = 0
+    while True:
+        try:
+            r = requests.get(f"{BASE_URL}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=35)
+            updates = r.json().get("result", [])
+            for update in updates:
+                offset = update["update_id"] + 1
+                msg = update.get("message", {})
+                chat_id = msg.get("chat", {}).get("id")
+                text = msg.get("text", "")
+                if not chat_id or not text:
+                    continue
+                if text == "/start":
+                    handle_start(chat_id)
+                else:
+                    handle_text(chat_id, text)
+        except Exception as e:
+            print(f"Error: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     main()
