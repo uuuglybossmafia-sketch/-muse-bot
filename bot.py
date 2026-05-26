@@ -41,7 +41,30 @@ def ask_openai(system, history):
         "max_tokens": 800
     }
     r = requests.post(OAI, headers=headers, json=data, timeout=30)
-    return r.json()["choices"][0]["message"]["content"]
+    def ask_openai(system, history):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "system", "content": system}] + history,
+        "max_tokens": 800
+    }
+
+    r = requests.post(OAI, headers=headers, json=data, timeout=30)
+
+    print(r.status_code)
+    print(r.text)
+
+    response = r.json()
+
+    if "choices" not in response:
+        error_msg = response.get("error", {}).get("message", "Unknown error")
+        raise Exception(error_msg)
+
+    return response["choices"][0]["message"]["content"]
 
 def send_message(chat_id, text, keyboard=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
