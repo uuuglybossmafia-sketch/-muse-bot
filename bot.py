@@ -2,24 +2,22 @@ import os
 import time
 import requests
 
-# ENV
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# URL
 TG = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-API_URL = "https://api.together.xyz/v1/chat/completions"
+
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
-# AI
 def ask_ai(prompt):
     headers = {
-        "Authorization": f"Bearer {TOGETHER_API_KEY}",
+        "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
 
     data = {
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+        "model": "llama-3.1-8b-instant",
         "messages": [
             {
                 "role": "system",
@@ -30,8 +28,8 @@ def ask_ai(prompt):
                 "content": prompt
             }
         ],
-        "max_tokens": 500,
-        "temperature": 0.7
+        "temperature": 0.7,
+        "max_tokens": 500
     }
 
     r = requests.post(
@@ -41,24 +39,17 @@ def ask_ai(prompt):
         timeout=60
     )
 
-    print("STATUS:", r.status_code)
-    print("TEXT:", r.text)
+    print(r.status_code)
+    print(r.text)
 
     response = r.json()
 
-    # ПРОВЕРКА ОШИБКИ
     if "choices" not in response:
-        error_message = response.get("error", {}).get(
-            "message",
-            str(response)
-        )
-
-        raise Exception(error_message)
+        raise Exception(str(response))
 
     return response["choices"][0]["message"]["content"]
 
 
-# TELEGRAM
 def send_message(chat_id, text):
     requests.post(
         f"{TG}/sendMessage",
@@ -69,22 +60,6 @@ def send_message(chat_id, text):
     )
 
 
-# MESSAGE HANDLER
-def handle_message(chat_id, text):
-    try:
-        answer = ask_ai(text)
-        send_message(chat_id, answer)
-
-    except Exception as e:
-        print("ERROR:", str(e))
-
-        send_message(
-            chat_id,
-            f"Ошибка:\n{str(e)}"
-        )
-
-
-# MAIN LOOP
 def main():
     print("BOT STARTED")
 
@@ -106,21 +81,26 @@ def main():
             for update in updates:
                 offset = update["update_id"] + 1
 
-                message = update.get("message")
+                msg = update.get("message")
 
-                if not message:
+                if not msg:
                     continue
 
-                chat_id = message["chat"]["id"]
-                text = message.get("text")
+                chat_id = msg["chat"]["id"]
+                text = msg.get("text")
 
                 if not text:
                     continue
 
-                handle_message(chat_id, text)
+                try:
+                    answer = ask_ai(text)
+                    send_message(chat_id, answer)
+
+                except Exception as e:
+                    send_message(chat_id, f"Ошибка:\n{str(e)}")
 
         except Exception as e:
-            print("MAIN ERROR:", str(e))
+            print(e)
             time.sleep(5)
 
 
