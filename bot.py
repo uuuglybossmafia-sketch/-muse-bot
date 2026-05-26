@@ -2,194 +2,216 @@ import os
 import time
 import requests
 
+# =========================
+# ENV
+# =========================
+
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-TG = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-API_URL = "https://api.groq.com/openai/v1/chat/completions"
+if not TELEGRAM_TOKEN:
+    raise Exception("Нет TELEGRAM_TOKEN")
 
-# Ключевые слова музыкальной тематики
-MUSIC_WORDS = [
-    "музыка",
-    "трек",
-    "бит",
-    "рэп",
-    "хип хоп",
-    "песня",
-    "вокал",
-    "fl studio",
-    "ableton",
-    "logic pro",
-    "cubase",
-    "studio one",
-    "сведение",
-    "мастеринг",
-    "микс",
-    "плагин",
-    "аккорд",
-    "мелодия",
-    "аранжировка",
-    "драм",
-    "808",
-    "бас",
-    "лирика",
-    "жанр",
-    "артист",
-    "исполнитель"
-]
+if not GROQ_API_KEY:
+    raise Exception("Нет GROQ_API_KEY")
 
+# =========================
+# URLS
+# =========================
 
-def is_music_related(text):
-    text = text.lower()
+TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-    return any(word in text for word in MUSIC_WORDS)
+# =========================
+# AI
+# =========================
 
+SYSTEM_PROMPT = """
+Ты профессиональный музыкальный AI ассистент.
 
-def ask_ai(prompt):
+Ты специализируешься ТОЛЬКО на:
+- музыке
+- рэпе
+- битах
+- вокале
+- сведении
+- мастеринге
+- FL Studio
+- Ableton
+- Logic Pro
+- плагинах
+- написании песен
+- теории музыки
+- жанрах
+- артистах
+- записи звука
+- обработке вокала
+
+Если вопрос не связан с музыкой —
+отвечай только:
+
+"Я музыкальный ассистент и отвечаю только на музыкальные темы."
+
+Если вопрос хотя бы частично связан с музыкой —
+обязательно помогай.
+
+Отвечай:
+- кратко
+- понятно
+- по делу
+
+Не придумывай факты.
+"""
+
+# =========================
+# SEND MESSAGE
+# =========================
+
+def send_message(chat_id, text):
+    try:
+        requests.post(
+            f"{TG_API}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text
+            },
+            timeout=20
+        )
+
+    except Exception as e:
+        print("SEND MESSAGE ERROR:", e)
+
+# =========================
+# ASK AI
+# =========================
+
+def ask_ai(user_text):
+
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    system_prompt = """
-Ты музыкальный AI ассистент.
-
-Ты отвечаешь ТОЛЬКО на темы:
-- музыка
-- артисты
-- рэп
-- биты
-- сведение
-- мастеринг
-- FL Studio
-- Ableton
-- плагины
-- аккорды
-- тексты песен
-- жанры
-- теория музыки
-
-Если вопрос не связан с музыкой —
-отвечай:
-
-"Я музыкальный ассистент и отвечаю только на музыкальные темы."
-
-Отвечай кратко, понятно и по делу.
-Не выдумывай факты.
-"""
-
-    data = {
+    payload = {
         "model": "llama-3.3-70b-versatile",
         "messages": [
             {
                 "role": "system",
-                "content": system_prompt
+                "content": SYSTEM_PROMPT
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": user_text
             }
         ],
         "temperature": 0.2,
         "max_tokens": 250
     }
 
-    r = requests.post(
-        API_URL,
+    response = requests.post(
+        GROQ_API_URL,
         headers=headers,
-        json=data,
+        json=payload,
         timeout=60
     )
 
-    print("STATUS:", r.status_code)
-    print("RESPONSE:", r.text)
+    print("AI STATUS:", response.status_code)
+    print("AI RESPONSE:", response.text)
 
-    response = r.json()
+    data = response.json()
 
-    if "choices" not in response:
-        raise Exception(str(response))
+    if "choices" not in data:
+        raise Exception(str(data))
 
-    return response["choices"][0]["message"]["content"]
+    answer = data["choices"][0]["message"]["content"]
 
+    if not answer:
+        return "Ошибка генерации ответа."
 
-def send_message(chat_id, text):
-    requests.post(
-        f"{TG}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": text
-        }
+    return answer.strip()
+
+# =========================
+# GET UPDATES
+# =========================
+
+def get_updates(offset):
+
+    response = requests.get(
+        f"{TG_API}/getUpdates",
+        params={
+            "offset": offset,
+            "timeout": 30
+        },
+        timeout=35
     )
 
+    data = response.json()
+
+    if "result" not in data:
+        return []
+
+    return data["result"]
+
+# =========================
+# MAIN
+# =========================
 
 def main():
+
     print("BOT STARTED")
 
     offset = 0
 
     while True:
+
         try:
-            r = requests.get(
-                f"{TG}/getUpdates",
-                params={
-                    "offset": offset,
-                    "timeout": 30
-                },
-                timeout=35
-            )
 
-            data = r.json()
-
-            if "result" not in data:
-                print(data)
-                time.sleep(3)
-                continue
-
-            updates = data["result"]
+            updates = get_updates(offset)
 
             for update in updates:
+
                 offset = update["update_id"] + 1
 
-                msg = update.get("message")
+                message = update.get("message")
 
-                if not msg:
+                if not message:
                     continue
 
-                chat_id = msg["chat"]["id"]
-                text = msg.get("text")
+                chat_id = message["chat"]["id"]
+
+                text = message.get("text")
 
                 if not text:
                     continue
 
-                print(f"USER: {text}")
-
-                # Проверка музыкальной темы
-                if not is_music_related(text):
-                    send_message(
-                        chat_id,
-                        "Я музыкальный ассистент и отвечаю только на музыкальные темы."
-                    )
-                    continue
+                print(f"\nUSER: {text}")
 
                 try:
+
                     answer = ask_ai(text)
 
                     print(f"AI: {answer}")
 
                     send_message(chat_id, answer)
 
-                except Exception as e:
-                    print("AI ERROR:", e)
+                except Exception as ai_error:
+
+                    print("AI ERROR:", ai_error)
 
                     send_message(
                         chat_id,
-                        f"Ошибка AI:\n{str(e)}"
+                        f"Ошибка AI:\n{str(ai_error)}"
                     )
 
-        except Exception as e:
-            print("MAIN ERROR:", e)
+        except Exception as main_error:
+
+            print("MAIN ERROR:", main_error)
+
             time.sleep(5)
 
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
     main()
