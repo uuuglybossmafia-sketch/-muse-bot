@@ -1,69 +1,116 @@
-# =========================
-# AUDIO
-# =========================
+import os
+import time
+import requests
 
-if "audio" in message:
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-    chat_id = message["chat"]["id"]
+TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-    try:
+AI_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-        send_message(chat_id, "Скачиваю аудио...")
+SYSTEM_PROMPT = """
+Ты музыкальный AI ассистент.
 
-        file_id = message["audio"]["file_id"]
+Помогай:
+- с аккордами
+- мелодиями
+- басом
+- драм партиями
+- ритмами
+- грувом
+- жанрами
+- теорией музыки
 
-        filename = download_file(file_id)
+Отвечай только на музыкальные темы.
+"""
 
-        send_message(chat_id, "Распознаю аудио...")
+def send_message(chat_id, text):
 
-        transcription = transcribe_audio(filename)
+    requests.post(
+        f"{TG_API}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": text
+        }
+    )
 
-        send_message(chat_id, "AI анализирует трек...")
+def ask_ai(user_text):
 
-        analysis = analyze_track(transcription)
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-        send_message(chat_id, analysis)
+    data = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": user_text
+            }
+        ],
+        "temperature": 0.3,
+        "max_tokens": 300
+    }
 
-    except Exception as e:
+    response = requests.post(
+        AI_URL,
+        headers=headers,
+        json=data
+    )
 
-        print(e)
+    result = response.json()
 
-        send_message(
-            chat_id,
-            f"Ошибка анализа:\n{str(e)}"
-        )
+    return result["choices"][0]["message"]["content"]
 
-    continue
+def main():
 
-# =========================
-# VOICE
-# =========================
+    offset = 0
 
-if "voice" in message:
+    while True:
 
-    chat_id = message["chat"]["id"]
+        try:
 
-    try:
+            response = requests.get(
+                f"{TG_API}/getUpdates",
+                params={
+                    "offset": offset,
+                    "timeout": 30
+                }
+            )
 
-        send_message(chat_id, "Обрабатываю голосовое...")
+            updates = response.json()["result"]
 
-        file_id = message["voice"]["file_id"]
+            for update in updates:
 
-        filename = download_file(file_id)
+                offset = update["update_id"] + 1
 
-        transcription = transcribe_audio(filename)
+                message = update.get("message")
 
-        analysis = analyze_track(transcription)
+                if not message:
+                    continue
 
-        send_message(chat_id, analysis)
+                text = message.get("text")
 
-    except Exception as e:
+                if not text:
+                    continue
 
-        print(e)
+                chat_id = message["chat"]["id"]
 
-        send_message(
-            chat_id,
-            f"Ошибка voice:\n{str(e)}"
-        )
+                answer = ask_ai(text)
 
-    continue
+                send_message(chat_id, answer)
+
+        except Exception as e:
+
+            print(e)
+
+            time.sleep(5)
+
+if __name__ == "__main__":
+    main()
