@@ -1,20 +1,20 @@
 import os
 import time
 import requests
-from openai import OpenAI
+import json
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+TG = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+OAI = "https://api.openai.com/v1/chat/completions"
 
 user_data = {}
 
 SYSTEM_PROMPTS = {
     "chords": "Ты профессиональный музыкальный теоретик и продюсер. Помогаешь с подбором и анализом аккордов, прогрессий, тональностей. Давай конкретные советы с примерами из известной музыки. Отвечай по-русски.",
     "mixing": "Ты опытный звукорежиссёр и mixing engineer. Давай конкретные советы по сведению: EQ, компрессия, реверб, панорама. Называй реальные плагины (Fabfilter, Waves, iZotope), конкретные значения в Hz и dB. Отвечай по-русски.",
-    "mastering": "Ты профессиональный mastering engineer. Помогаешь с финальной обработкой треков: LUFS, лимитинг, тональный баланс. Знаешь стандарты всех платформ (Spotify -14 LUFS и т.д.). Отвечай по-русски.",
+    "mastering": "Ты профессиональный mastering engineer. Помогаешь с финальной обработкой треков: LUFS, лимитинг, тональный баланс. Знаешь стандарты всех платформ. Отвечай по-русски.",
     "chat": "Ты MUSE — AI-ассистент по музыкальному продакшну. Помогаешь с теорией музыки, аранжировкой, выбором инструментов. Отвечай дружелюбно по-русски."
 }
 
@@ -25,19 +25,32 @@ MODE_NAMES = {
     "chat": "💬 Чат"
 }
 
-def send_message(chat_id, text, keyboard=None):
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    if keyboard:
-        payload["reply_markup"] = {"keyboard": keyboard, "resize_keyboard": True}
-    requests.post(f"{BASE_URL}/sendMessage", json=payload)
-
-def send_typing(chat_id):
-    requests.post(f"{BASE_URL}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
-
 MAIN_KEYBOARD = [
     ["🎸 Аккорды", "🎚️ Сведение"],
     ["🔊 Мастеринг", "💬 Свободный чат"]
 ]
+
+def ask_openai(system, history):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "system", "content": system}] + history,
+        "max_tokens": 800
+    }
+    r = requests.post(OAI, headers=headers, json=data, timeout=30)
+    return r.json()["choices"][0]["message"]["content"]
+
+def send_message(chat_id, text, keyboard=None):
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if keyboard:
+        payload["reply_markup"] = {"keyboard": keyboard, "resize_keyboard": True}
+    requests.post(f"{TG}/sendMessage", json=payload)
+
+def send_typing(chat_id):
+    requests.post(f"{TG}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
 
 def handle_start(chat_id):
     user_data[chat_id] = {"mode": "chat", "history": []}
@@ -72,7 +85,7 @@ def handle_text(chat_id, text):
             "mastering": "Например: «Какой LUFS нужен для Spotify?»",
             "chat": "Задавай любые вопросы о музыке!"
         }
-        send_message(chat_id, f"{MODE_NAMES[mode]}\n\n{hints[mode]}\n\nНапиши свой вопрос 👇", MAIN_KEYBOARD)
+        send_message(chat_id, f"*{MODE_NAMES[mode]}*\n\n{hints[mode]}\n\nНапиши свой вопрос 👇", MAIN_KEYBOARD)
         return
 
     mode = user_data[chat_id].get("mode", "chat")
@@ -84,12 +97,7 @@ def handle_text(chat_id, text):
         history = history[-10:]
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": SYSTEM_PROMPTS[mode]}] + history,
-            max_tokens=800
-        )
-        reply = response.choices[0].message.content
+        reply = ask_openai(SYSTEM_PROMPTS[mode], history)
         history.append({"role": "assistant", "content": reply})
         user_data[chat_id]["history"] = history
         send_message(chat_id, f"*{MODE_NAMES[mode]}*\n\n{reply}", MAIN_KEYBOARD)
@@ -101,7 +109,7 @@ def main():
     offset = 0
     while True:
         try:
-            r = requests.get(f"{BASE_URL}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=35)
+            r = requests.get(f"{TG}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=35)
             updates = r.json().get("result", [])
             for update in updates:
                 offset = update["update_id"] + 1
