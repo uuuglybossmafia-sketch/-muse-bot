@@ -6,8 +6,43 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 TG = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# Ключевые слова музыкальной тематики
+MUSIC_WORDS = [
+    "музыка",
+    "трек",
+    "бит",
+    "рэп",
+    "хип хоп",
+    "песня",
+    "вокал",
+    "fl studio",
+    "ableton",
+    "logic pro",
+    "cubase",
+    "studio one",
+    "сведение",
+    "мастеринг",
+    "микс",
+    "плагин",
+    "аккорд",
+    "мелодия",
+    "аранжировка",
+    "драм",
+    "808",
+    "бас",
+    "лирика",
+    "жанр",
+    "артист",
+    "исполнитель"
+]
+
+
+def is_music_related(text):
+    text = text.lower()
+
+    return any(word in text for word in MUSIC_WORDS)
 
 
 def ask_ai(prompt):
@@ -16,20 +51,47 @@ def ask_ai(prompt):
         "Content-Type": "application/json"
     }
 
+    system_prompt = """
+Ты музыкальный AI ассистент.
+
+Ты отвечаешь ТОЛЬКО на темы:
+- музыка
+- артисты
+- рэп
+- биты
+- сведение
+- мастеринг
+- FL Studio
+- Ableton
+- плагины
+- аккорды
+- тексты песен
+- жанры
+- теория музыки
+
+Если вопрос не связан с музыкой —
+отвечай:
+
+"Я музыкальный ассистент и отвечаю только на музыкальные темы."
+
+Отвечай кратко, понятно и по делу.
+Не выдумывай факты.
+"""
+
     data = {
-        "model": "llama-3.1-8b-instant",
+        "model": "llama-3.3-70b-versatile",
         "messages": [
             {
                 "role": "system",
-                "content": "Ты полезный AI ассистент. Отвечай по-русски."
+                "content": system_prompt
             },
             {
                 "role": "user",
                 "content": prompt
             }
         ],
-        "temperature": 0.7,
-        "max_tokens": 500
+        "temperature": 0.2,
+        "max_tokens": 250
     }
 
     r = requests.post(
@@ -39,8 +101,8 @@ def ask_ai(prompt):
         timeout=60
     )
 
-    print(r.status_code)
-    print(r.text)
+    print("STATUS:", r.status_code)
+    print("RESPONSE:", r.text)
 
     response = r.json()
 
@@ -76,7 +138,14 @@ def main():
                 timeout=35
             )
 
-            updates = r.json()["result"]
+            data = r.json()
+
+            if "result" not in data:
+                print(data)
+                time.sleep(3)
+                continue
+
+            updates = data["result"]
 
             for update in updates:
                 offset = update["update_id"] + 1
@@ -92,15 +161,33 @@ def main():
                 if not text:
                     continue
 
+                print(f"USER: {text}")
+
+                # Проверка музыкальной темы
+                if not is_music_related(text):
+                    send_message(
+                        chat_id,
+                        "Я музыкальный ассистент и отвечаю только на музыкальные темы."
+                    )
+                    continue
+
                 try:
                     answer = ask_ai(text)
+
+                    print(f"AI: {answer}")
+
                     send_message(chat_id, answer)
 
                 except Exception as e:
-                    send_message(chat_id, f"Ошибка:\n{str(e)}")
+                    print("AI ERROR:", e)
+
+                    send_message(
+                        chat_id,
+                        f"Ошибка AI:\n{str(e)}"
+                    )
 
         except Exception as e:
-            print(e)
+            print("MAIN ERROR:", e)
             time.sleep(5)
 
 
